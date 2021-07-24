@@ -42,7 +42,7 @@ impl Fetch for PanicSource {
 
 impl<S> Walker<S>
 where
-    S: Fetch + Sized + Send + Clone,
+    S: Fetch + Sized + Send + Sync + Clone,
 {
     /// Applies a batch of operations, possibly creating a new tree if
     /// `maybe_tree` is `None`. This is similar to `Walker<S>::apply`, but does
@@ -159,27 +159,73 @@ where
 
         let mut deleted_keys = LinkedList::default();
 
-        let tree = if !left_batch.is_empty() {
-            self.walk(true, |maybe_left| {
-                let (maybe_left, mut deleted_keys_left) = Self::apply_to(maybe_left, left_batch)?;
-                deleted_keys.append(&mut deleted_keys_left);
-                Ok(maybe_left)
-            })?
+        let left_empty = left_batch.is_empty();
+        let right_empty = right_batch.is_empty();
+
+        let mut tree = self;
+        let mut left_link = None;
+        let (mut tree, maybe_left) = if !left_empty {
+            if let Some(_) = tree.tree().child(true) {
+                tree.detach(true)?
+            } else {
+                left_link = tree.tree_mut().slot_mut(true).take();
+                (tree, None) 
+            }
         } else {
-            self
+            (tree, None)
         };
 
-        let tree = if !right_batch.is_empty() {
-            tree.walk(false, |maybe_right| {
-                let (maybe_right, mut deleted_keys_right) =
-                    Self::apply_to(maybe_right, right_batch)?;
-                deleted_keys.append(&mut deleted_keys_right);
-                Ok(maybe_right)
-            })?
+        let mut right_link = None;
+        let (tree, maybe_right) = if !right_empty {
+            if let Some(_) = tree.tree().child(false) {
+                tree.detach(false)?
+            } else {
+                right_link = tree.tree_mut().slot_mut(false).take();
+                (tree, None)
+            }
+        } else {
+            (tree, None)
+        };
+
+        let (left, right) = rayon::join(
+            || {
+                let maybe_left = if !left_empty && left_link.is_some() {
+                    let source = tree.clone_source();
+                    let node = source.fetch(left_link.as_ref().unwrap())?;
+                    Some(Walker::new(node, source))
+                } else {
+                    maybe_left
+                };
+                Self::apply_to(maybe_left, left_batch)
+            },
+            || {
+                let maybe_right = if !right_empty && right_link.is_some() {
+                    let source = tree.clone_source();
+                    let node = source.fetch(right_link.as_ref().unwrap())?;
+                    Some(Walker::new(node, source))
+                } else {
+                    maybe_right
+                };
+                Self::apply_to(maybe_right, right_batch)
+            },
+        );
+        let (maybe_left, mut deleted_left) = left?;
+        let (maybe_right, mut deleted_right) = right?;
+
+        deleted_keys.append(&mut deleted_left);
+        deleted_keys.append(&mut deleted_right);
+
+        let tree = if !left_empty {
+            tree.attach(true, maybe_left)
         } else {
             tree
         };
-
+        let tree = if !right_empty {
+            tree.attach(false, maybe_right)
+        } else {
+            tree
+        };
+        
         let tree = tree.maybe_balance()?;
 
         Ok((Some(tree), deleted_keys))

@@ -100,6 +100,10 @@ where
         &self.tree
     }
 
+    pub fn tree_mut(&mut self) -> &mut Tree {
+        &mut self.tree
+    }
+
     /// Consumes the `Walker` and returns the `Tree` it wraps.
     pub fn into_inner(self) -> Tree {
         self.tree.into_inner()

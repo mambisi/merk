@@ -103,22 +103,90 @@ fn update_1m_2k_seq_rocksdb_noprune(b: &mut Bencher) {
 
 #[bench]
 fn update_1m_2k_rand_rocksdb_noprune(b: &mut Bencher) {
-    let initial_size = 1_000_000;
-    let batch_size = 2_000;
+    let initial_size = 4_000_000;
+    let batch_size = 50_000;
 
     let path = thread::current().name().unwrap().to_owned();
-    let mut merk = TempMerk::open(path).expect("failed to open merk");
+    let mut merk = Merk::open(path).expect("failed to open merk");
+
+    println!("making tree");
 
     for i in 0..(initial_size / batch_size) {
         let batch = make_batch_rand(batch_size, i);
         unsafe { merk.apply_unchecked(&batch, &[]).expect("apply failed") };
     }
+    merk.flush().unwrap();
+
+    println!("made tree");
 
     let mut i = 0;
     b.iter(|| {
+        println!("{}", i);
         let batch = make_batch_rand(batch_size, i);
         unsafe { merk.apply_unchecked(&batch, &[]).expect("apply failed") };
         i = (i + 1) % (initial_size / batch_size);
+        // merk.flush().unwrap();
+    });
+}
+
+fn recurse<F: Fn() + Sync>(n: usize, f: &F) {
+    if n == 1 {
+        f();
+    } else {
+        rayon::join(
+            || recurse(n / 2, f),
+            || recurse(n / 2, f)
+        );
+    }
+}
+
+#[bench]
+fn x_multi_get(b: &mut Bencher) {
+    let mut merk = Merk::open("main").expect("failed to open merk");
+    let db = merk.db;
+
+    let batch_size = 100_000;
+    let get_size = 65_000;
+    let batch = make_batch_rand(batch_size, 0);
+
+    let mut i = 0;
+    let multiget = || {
+        let keys = batch.iter().map(|(k, _)| k).take(get_size);
+        db.multi_get(keys)
+            .into_iter()
+            .collect::<std::result::Result<Vec<_>, merk::rocksdb::Error>>()
+            .unwrap();
+    };
+    b.iter(|| {
+        recurse(8, &multiget);
+        i += 1;
+        i = i % batch_size as usize;
+    });
+}
+
+#[bench]
+fn x_get(b: &mut Bencher) {
+    let mut merk = Merk::open("main").expect("failed to open merk");
+
+    println!("making tree");
+    for i in 0..(1_000_000 / 100_000) {
+        let batch = make_batch_rand(100_000, i);
+        unsafe { merk.apply_unchecked(&batch, &[]).expect("apply failed") };
+    }
+    merk.flush().unwrap();
+    println!("made tree");
+    
+    let db = merk.db;
+
+    let batch_size = 100_000;
+    let batch = make_batch_rand(batch_size, 0);
+
+    let mut i = 0;
+    b.iter(|| {
+        let get = || { db.get(&batch[i].0).unwrap(); };
+        recurse(8 , &get);
+        i += 1;
+        i %= batch_size as usize;
     });
 }
 

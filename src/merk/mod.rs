@@ -28,7 +28,7 @@ fn column_families() -> Vec<ColumnFamilyDescriptor> {
 /// A handle to a Merkle key/value store backed by RocksDB.
 pub struct Merk {
     pub(crate) tree: Cell<Option<Tree>>,
-    pub(crate) db: rocksdb::DB,
+    pub db: rocksdb::DB,
     pub(crate) path: PathBuf,
 }
 
@@ -192,7 +192,8 @@ impl Merk {
         self.tree.set(maybe_tree);
 
         // commit changes to db
-        self.commit(deleted_keys, aux)
+        let res = self.commit(deleted_keys, aux);
+        res
     }
 
     /// Closes the store and deletes all data from disk.
@@ -267,7 +268,7 @@ impl Merk {
             // TODO: concurrent commit
             if let Some(tree) = maybe_tree {
                 // TODO: configurable committer
-                let mut committer = MerkCommitter::new(tree.height(), 100);
+                let mut committer = MerkCommitter::new(tree.height(), 20);
                 tree.commit(&mut committer)?;
 
                 // update pointer to root node
@@ -287,6 +288,7 @@ impl Merk {
             to_batch.push((key, None));
         }
         to_batch.sort_by(|a, b| a.0.cmp(&b.0));
+
         for (key, maybe_value) in to_batch {
             if let Some(value) = maybe_value {
                 batch.put(key, value);

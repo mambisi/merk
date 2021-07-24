@@ -7,6 +7,7 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
+rayon = "1.5.1"
 
 [dependencies.time]
 version = "0.1.42"
@@ -47,8 +48,8 @@ optional = true
 
 [dependencies.rocksdb]
 git = "https://github.com/rust-rocksdb/rust-rocksdb"
-version = "0.16.0"
-rev = "v0.16.0"
+version = "0.17.0"
+rev = "v0.17.0"
 default-features = false
 optional = true
 
